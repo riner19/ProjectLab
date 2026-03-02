@@ -18,7 +18,7 @@ class PoseActionDataset(Dataset):
         df = pd.read_csv(file_path)
 
         # 2. Separate features (the 51 coordinates) and the label
-        # We drop the 'frame_number' and 'label' to keep only the X, Y, Conf math
+        #  to keep only the X, Y, Conf math
         features = df.drop(columns=['frame_number', 'label']).values
         label = df['label'].iloc[0]  # The label is the same for the whole video
 

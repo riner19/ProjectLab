@@ -69,4 +69,4 @@ for category_name, label_value in categories.items():
         cap.release()
         print(f"   ✅ Saved: {csv_name} ({frame_idx} frames)")
 
-print("\n🎉 BATCH EXTRACTION COMPLETE! All 100 CSVs are ready in the 'dataset_csvs' folder.")
+print("\nBATCH EXTRACTION COMPLETE! All 100 CSVs are ready in the 'dataset_csvs' folder.")
