@@ -1,40 +1,63 @@
-# Real-Time Spatio-Temporal Action Recognition on Edge Devices 🥊
+# Real-Time Human Action Recognition (HAR)
+**Skeleton-based LSTM Pipeline utilizing YOLOv8 and PyTorch**
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-ee4c2c)
-![YOLO](https://img.shields.io/badge/YOLOv8-Pose%20Estimation-00FFFF)
-![EdgeAI](https://img.shields.io/badge/Edge%20AI-Raspberry%20Pi%20%2F%20Jetson-76B900)
+## 🚀 Overview
+This project implements an end-to-end deep learning pipeline for real-time human action recognition. The system uses **YOLOv8-Pose** for spatial feature extraction and a custom **LSTM (Long Short-Term Memory)** network to classify temporal sequences of movement.
 
-## Overview
-This repository contains a full-stack Machine Learning pipeline designed to perform real-time action recognition (specifically combat sports/striking) on highly constrained edge hardware. 
 
-Instead of processing heavy, high-resolution video frames directly, this project utilizes a **Hybrid Architecture**:
-1. **Vision Front-End (Spatial):** A lightweight YOLOv8-Nano pose estimation model extracts 17 COCO skeletal keypoints.
-2. **Sequence Back-End (Temporal):** A custom PyTorch neural network (LSTM/Transformer) processes the coordinate time-series to classify the action.
 
-By compressing dense pixel data into lightweight coordinate tensors, the system achieves significant inference speedups suitable for deployment on an NVIDIA Jetson Orin Nano or Raspberry Pi 5.
+## 🛠️ Technical Stack
+* **Computer Vision:** YOLOv8-Pose (Ultralytics)
+* **Deep Learning Framework:** PyTorch
+* **Data Processing:** Pandas, NumPy
+* **Dataset:** KTH Action Recognition Dataset (Boxing & Walking)
+* **Hardware Acceleration:** NVIDIA GeForce RTX 3050 Ti (CUDA)
 
-## 🏗️ System Architecture
+## 📁 Project Structure
+- `setup_kth.py`: Automated dataset downloader and organizer via `kagglehub`.
+- `extract_batch.py`: Batch processor converting raw video into 51-dimensional coordinate CSVs.
+- `dataset.py`: Optimized PyTorch Dataset using **RAM Preloading** and **Sliding Window** augmentation.
+- `model.py`: Architecture definition for the LSTM Neural Network.
+- `train.py`: Training loop with validation tracking and model checkpointing.
+- `live_inference.py`: Real-time webcam application with 30-frame temporal smoothing.
 
-### 1. Automated Data Engineering Pipeline
-* Utilizes the Kaggle API to ingest the 7GB UCF101 dataset.
-* Automatically parses, filters, and isolates balanced sets of target classes (e.g., `Boxing`, `WalkingWithDog`).
-* Runs batch feature extraction, converting `.avi` video files into sequential `.csv` files containing `(X, Y, Confidence)` vectors for all 17 joints per frame.
+## 🧠 Pipeline Logic
+1. **Extraction:** YOLOv8 identifies 17 keypoints per frame. Each keypoint has $(x, y, c)$ values, totaling 51 features per frame.
+2. **Windowing:** The `dataset.py` slices videos into overlapping **30-frame windows** (approx. 1 second of movement).
+3. **Training:** The LSTM learns the transition of these coordinates over time to distinguish a "Punch" from "Walking."
+4. **Optimization:** Data is preloaded into System RAM to ensure the GPU is never bottlenecked by Disk I/O.
 
-### 2. Spatio-Temporal Classification Model
-* Custom `torch.utils.data.Dataset` designed to ingest variable-length coordinate CSVs.
-* PyTorch-based sequence model designed to recognize biomechanical patterns over time windows.
 
-### 3. Edge Deployment & Hardware Optimization *(In Progress)*
-* Benchmarking CPU vs. NPU/GPU inference.
-* Target hardware: Raspberry Pi 5 (Hailo-8L) / NVIDIA Jetson Orin Nano (TensorRT).
 
-## 📂 Project Structure
-```text
-├── dataset_videos/      # Raw video data (ignored by git)
-├── dataset_csvs/        # Extracted sequential keypoints (ignored by git)
-├── auto_pipeline.py     # Automated dataset ingestion and balancing script
-├── extract_batch.py     # YOLOv8-Pose batch feature extraction pipeline
-├── dataset.py           # PyTorch Custom Dataset loader
-├── model.py             # PyTorch Sequence Model architecture (WIP)
-└── README.md
+## 📈 Performance
+- **Target Accuracy:** >90% on KTH Validation Set.
+- **Inference Latency:** <30ms per frame (Real-time).
+- **GPU Utilization:** Optimized via CUDA for both feature extraction and training.
+
+## ⚙️ How to Run
+1. **Prepare Environment:**
+   ```bash
+   pip install torch torchvision ultralytics pandas kagglehub opencv-python
+
+2. **Download & Extract Features:**
+
+    ```Bash
+    python setup_kth.py
+    python extract_batch.py
+
+3. **Train Model:**
+
+    ```Bash
+    python train.py
+4. **Run Real-Time Inference:**
+
+    ```Bash
+    python live_inference.py
+## 🔮 Future Work
+ * [ ] Implement Global Coordinate Normalization (making the model distance-invariant).
+
+ *[ ] Add Delta-Velocity Features to improve high-speed action detection.
+
+*[ ] Expand dataset classes to include Waving, Clapping, and Static.
+
+*[ ] Explore ST-GCN (Spatio-Temporal Graph Convolutional Networks) for higher topological accuracy.
