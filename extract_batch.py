@@ -1,72 +1,86 @@
 import cv2
-import csv
 import os
+import pandas as pd
+import torch
 from ultralytics import YOLO
 
-# 1. Initializing the YOLO model
-print("Loading YOLOv8 Nano Pose Model...")
-model = YOLO('yolov8n-pose.pt')
+print(f"CUDA Available: {torch.cuda.is_available()}")
 
-# 2. Define our classes and folders
-categories = {'idle': 0, 'punch': 1}
-base_input_folder = 'dataset_videos'
-output_folder = 'dataset_csvs'
+print("Loading YOLOv8 Pose Model...")
+yolo_model = YOLO('yolov8n-pose.pt')
 
-os.makedirs(output_folder, exist_ok=True)
 
-# 3. Setup the CSV Header (17 joints: x, y, conf + 1 Label)
-header = ['frame_number']
-for i in range(17):
-    header.extend([f'x{i}', f'y{i}', f'conf{i}'])
-header.append('label')
+if torch.cuda.is_available():
+    yolo_model.to('cuda')
+    print("YOLO successfully moved to GPU!")
+else:
+    print("WARNING: YOLO is stuck on CPU!")
 
-# 4. Process both folders
-for category_name, label_value in categories.items():
-    folder_path = os.path.join(base_input_folder, category_name)
+VIDEO_DIR = "raw_videos"
+OUTPUT_CSV_DIR = "custom_dataset_lastsuka"
 
-    if not os.path.exists(folder_path):
-        print(f"Warning: Folder {folder_path} not found. Skipping.")
+# Create output directory if it doesn't exist
+os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
+
+# Define our classes and their numeric labels
+CLASSES = {"idle": 0, "punch": 1}
+
+total_videos_processed = 0
+
+for class_name, label_value in CLASSES.items():
+    class_folder = os.path.join(VIDEO_DIR, class_name)
+
+    if not os.path.exists(class_folder):
+        print(f"Warning: Folder '{class_folder}' not found. Skipping...")
         continue
 
-    video_files = [f for f in os.listdir(folder_path) if f.endswith('.avi')]
-    print(f"\nProcessing {len(video_files)} videos in '{category_name}' (Label: {label_value})...")
+    video_files = [f for f in os.listdir(class_folder) if f.endswith(('.mp4', '.avi', '.mov'))]
+    print(f"\nFound {len(video_files)} videos in '{class_name}' folder.")
 
-    for video_name in video_files:
-        video_path = os.path.join(folder_path, video_name)
-        csv_name = f"{category_name}_{video_name.replace('.avi', '.csv')}"
-        csv_path = os.path.join(output_folder, csv_name)
-
+    for video_file in video_files:
+        video_path = os.path.join(class_folder, video_file)
         cap = cv2.VideoCapture(video_path)
 
-        with open(csv_path, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
+        csv_data = []
+        frame_idx = 0
 
-            frame_idx = 0
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-                results = model(frame, verbose=False)
+            # Run YOLO vision extraction
+            results = yolo_model(frame, device=0, verbose=False)
+            row_data = {'frame_number': frame_idx, 'label': label_value}
 
-                # If a person is found, extract their coordinates
-                if results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
-                    kpts = results[0].keypoints.data[0].cpu().numpy()
-                    row = [frame_idx]
-                    for kp in kpts:
-                        row.extend([kp[0], kp[1], kp[2]])
-                    row.append(label_value)
-                    writer.writerow(row)
-                else:
-                    # If no person is found in this frame, fill with zeros to keep the timeline stable
-                    row = [frame_idx] + [0.0] * 51
-                    row.append(label_value)
-                    writer.writerow(row)
+            # Extract the 51 raw keypoints
+            if results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
+                kpts = results[0].keypoints.data[0].cpu().numpy()
+                for j, kp in enumerate(kpts):
+                    row_data[f'kp_{j}_x'] = kp[0]
+                    row_data[f'kp_{j}_y'] = kp[1]
+                    row_data[f'kp_{j}_conf'] = kp[2]
+            else:
+                # If YOLO loses the person, fill with zeros
+                for j in range(17):
+                    row_data[f'kp_{j}_x'] = 0.0
+                    row_data[f'kp_{j}_y'] = 0.0
+                    row_data[f'kp_{j}_conf'] = 0.0
 
-                frame_idx += 1
+            csv_data.append(row_data)
+            frame_idx += 1
 
         cap.release()
-        print(f"   ✅ Saved: {csv_name} ({frame_idx} frames)")
 
-print("\nBATCH EXTRACTION COMPLETE! All 100 CSVs are ready in the 'dataset_csvs' folder.")
+        # Save to CSV
+        if csv_data:
+            # Create a clean filename (e.g., punch_video1.csv)
+            csv_filename = f"{class_name}_{video_file.split('.')[0]}.csv"
+            csv_path = os.path.join(OUTPUT_CSV_DIR, csv_filename)
+
+            df = pd.DataFrame(csv_data)
+            df.to_csv(csv_path, index=False)
+            total_videos_processed += 1
+            print(f"Extracted: {csv_filename} ({frame_idx} frames)")
+
+print(f"\nBatch extraction complete! {total_videos_processed} CSVs saved to '{OUTPUT_CSV_DIR}'.")
