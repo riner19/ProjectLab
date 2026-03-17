@@ -9,22 +9,18 @@ print(f"CUDA Available: {torch.cuda.is_available()}")
 print("Loading YOLOv8 Pose Model...")
 yolo_model = YOLO('yolov8n-pose.pt')
 
-
 if torch.cuda.is_available():
     yolo_model.to('cuda')
     print("YOLO successfully moved to GPU!")
 else:
     print("WARNING: YOLO is stuck on CPU!")
 
+# Make sure these folders match your actual setup
 VIDEO_DIR = "raw_videos"
-OUTPUT_CSV_DIR = "custom_dataset_lastsuka"
+OUTPUT_CSV_DIR = "custom_dataset_new"
 
-# Create output directory if it doesn't exist
 os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
-
-# Define our classes and their numeric labels
 CLASSES = {"idle": 0, "punch": 1}
-
 total_videos_processed = 0
 
 for class_name, label_value in CLASSES.items():
@@ -41,6 +37,10 @@ for class_name, label_value in CLASSES.items():
         video_path = os.path.join(class_folder, video_file)
         cap = cv2.VideoCapture(video_path)
 
+        # Get video dimensions for normalization
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
         csv_data = []
         frame_idx = 0
 
@@ -49,19 +49,27 @@ for class_name, label_value in CLASSES.items():
             if not ret:
                 break
 
-            # Run YOLO vision extraction
             results = yolo_model(frame, device=0, verbose=False)
             row_data = {'frame_number': frame_idx, 'label': label_value}
 
-            # Extract the 51 raw keypoints
+            # Check if any person is detected
             if results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
-                kpts = results[0].keypoints.data[0].cpu().numpy()
+
+                # --- FIX 1: Find the main person (largest bounding box) ---
+                boxes = results[0].boxes.xywh.cpu().numpy()  # x, y, width, height
+                areas = boxes[:, 2] * boxes[:, 3]  # width * height
+                main_person_idx = areas.argmax()  # index of the largest box
+
+                # Extract keypoints for the main person only
+                kpts = results[0].keypoints.data[main_person_idx].cpu().numpy()
+
                 for j, kp in enumerate(kpts):
-                    row_data[f'kp_{j}_x'] = kp[0]
-                    row_data[f'kp_{j}_y'] = kp[1]
+                    # --- FIX 2: Normalize coordinates ---
+                    row_data[f'kp_{j}_x'] = kp[0] / frame_width if frame_width > 0 else 0
+                    row_data[f'kp_{j}_y'] = kp[1] / frame_height if frame_height > 0 else 0
                     row_data[f'kp_{j}_conf'] = kp[2]
             else:
-                # If YOLO loses the person, fill with zeros
+                # Fallback: fill with zeros if YOLO loses the person
                 for j in range(17):
                     row_data[f'kp_{j}_x'] = 0.0
                     row_data[f'kp_{j}_y'] = 0.0
@@ -72,9 +80,7 @@ for class_name, label_value in CLASSES.items():
 
         cap.release()
 
-        # Save to CSV
         if csv_data:
-            # Create a clean filename (e.g., punch_video1.csv)
             csv_filename = f"{class_name}_{video_file.split('.')[0]}.csv"
             csv_path = os.path.join(OUTPUT_CSV_DIR, csv_filename)
 
