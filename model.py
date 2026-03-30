@@ -1,45 +1,50 @@
 import torch
 import torch.nn as nn
 
-
 class PoseLSTM(nn.Module):
-    def __init__(self, input_size=51, hidden_size=64, num_layers=2, num_classes=2):
+    def __init__(self, input_size=51, hidden_size=64, num_layers=2, num_classes=2, dropout_rate=0.5):
         super(PoseLSTM, self).__init__()
 
-        # 1. Store the parameters
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
-        # 2. The Sequence Brain (LSTM)
-        # batch_first=True means our tensor shape will be (batch, sequence, features)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        # 1. The Sequence Brain (Bidirectional LSTM with Dropout)
+        # batch_first=True ensures it expects tensors of shape (Batch, Sequence, Features)
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout_rate if num_layers > 1 else 0.0,
+            bidirectional=True
+        )
 
-        # 3. The Classifier (Fully Connected Layer)
-        # This takes the final thought of the LSTM and maps it to our 2 classes (Punch or Idle)
-        self.fc = nn.Linear(hidden_size, num_classes)
+        # 2. Regularization (Prevents overfitting to specific training punches)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        # 3. The Classifier
+        # We multiply hidden_size by 2 because bidirectional=True outputs both a forward and backward pass
+        self.fc = nn.Linear(hidden_size * 2, num_classes)
 
     def forward(self, x):
-        # Initialize hidden and cell states with zeros
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        # Pass the sequence through the LSTM
+        out, _ = self.lstm(x)
 
-        # Pass the whole sequence of frames through the LSTM
-        # 'out' holds the outputs for EVERY frame.
-        out, _ = self.lstm(x, (h0, c0))
+        # Grab the network's conclusion at the very end of the 30-frame sequence
+        last_out = out[:, -1, :]
 
-        # We only care about the network's conclusion at the very end of the video.
-        # out[:, -1, :] grabs the hidden state from the LAST frame of the sequence.
-        out = self.fc(out[:, -1, :])
+        # Pass through dropout and then the final fully connected layer
+        out = self.fc(self.dropout(last_out))
 
         return out
 
-
-# QUICK TEST BLOCK
+# --- QUICK TEST BLOCK ---
+# You can run this file directly just to make sure the tensor math works!
 if __name__ == "__main__":
     print("Initializing the PoseLSTM Model...")
     model = PoseLSTM()
 
-    # Create a fake batch of data to test if the math works
+    # Create a fake batch of data to test the architecture
     # Shape: (Batch Size of 4 videos, 30 frames per video, 51 keypoint features)
     dummy_input = torch.randn(4, 30, 51)
 
@@ -48,3 +53,4 @@ if __name__ == "__main__":
 
     print(f"Input shape: {dummy_input.shape}")
     print(f"Output shape: {predictions.shape} -> (Batch Size, Num Classes)")
+    print("Model architecture is ready to go!")
