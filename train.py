@@ -7,8 +7,10 @@ import random
 from tqdm.auto import tqdm
 from timeit import default_timer as timer
 
+# Import your custom modules
 from pose_dataset import PoseActionDataset
 from model import PoseLSTM
+
 
 def print_train_time(start: float, end: float, device: torch.device):
     total_time = end - start
@@ -16,24 +18,47 @@ def print_train_time(start: float, end: float, device: torch.device):
     return total_time
 
 
-# --- 1. VIDEO-LEVEL SPLIT FUNCTION ---
+# --- 1. SMART VIDEO-LEVEL SPLIT FUNCTION ---
 def prepare_train_val_folders(source_dir, train_dir="train_data", val_dir="val_data", split_ratio=0.8):
-    """Sorts whole videos (CSVs) into train and val folders to prevent data leakage."""
-    if os.path.exists(train_dir) and os.path.exists(val_dir):
-        print(f"Using existing split folders: '{train_dir}' and '{val_dir}'")
-        return
+    """Sorts CSVs into train/val folders by reading the actual labels inside the files."""
+    print("Rebuilding Train and Validation folders with new mixed data...")
 
-    print("Splitting dataset into separate Train and Validation folders...")
+    # Delete the old folders so we don't train on stale data
+    if os.path.exists(train_dir):
+        shutil.rmtree(train_dir)
+    if os.path.exists(val_dir):
+        shutil.rmtree(val_dir)
+
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(val_dir, exist_ok=True)
 
     all_csvs = [f for f in os.listdir(source_dir) if f.endswith('.csv')]
 
-    # Group by label to maintain balance
-    idle_csvs = [f for f in all_csvs if f.startswith('idle')]
-    punch_csvs = [f for f in all_csvs if f.startswith('punch')]
+    idle_csvs = []
+    punch_csvs = []
 
-    random.seed(42)  # For reproducibility
+    # Look INSIDE the CSV to find the true label
+    for f in all_csvs:
+        filepath = os.path.join(source_dir, f)
+        try:
+            with open(filepath, 'r') as file:
+                header = file.readline()  # Skip header
+                first_data_row = file.readline().strip().split(',')
+
+                # Column index 1 is 'label'
+                if len(first_data_row) > 1:
+                    label = int(first_data_row[1])
+                    if label == 1:
+                        punch_csvs.append(f)
+                    else:
+                        idle_csvs.append(f)
+        except Exception as e:
+            pass  # Skip broken or empty files invisibly
+
+    print(f"✅ Found {len(punch_csvs)} Punch sequences and {len(idle_csvs)} Idle sequences.")
+
+    # Shuffle for a truly random mix of SBU, UTD, and KTH
+    random.seed(42)
     random.shuffle(idle_csvs)
     random.shuffle(punch_csvs)
 
@@ -48,10 +73,10 @@ def prepare_train_val_folders(source_dir, train_dir="train_data", val_dir="val_d
 
 if __name__ == '__main__':
     # --- 2. HYPERPARAMETERS ---
-    EPOCHS = 100
+    EPOCHS = 100  # Increased for larger dataset
     LEARNING_RATE = 0.001
-    BATCH_SIZE = 8
-    SOURCE_CSV_DIR = "custom_dataset_new"
+    BATCH_SIZE = 32  # Increased for smoother learning curve
+    SOURCE_CSV_DIR = "custom_dataset_final"
 
     # --- 3. DEVICE AGNOSTIC SETUP ---
     if torch.cuda.is_available():
@@ -63,6 +88,7 @@ if __name__ == '__main__':
 
     print(f"Initializing Training Pipeline...")
     print(f"Hardware detected: {device}")
+    print(f"Source Folder: {SOURCE_CSV_DIR}")
 
     # --- 4. LOAD DATA SAFELY ---
     prepare_train_val_folders(source_dir=SOURCE_CSV_DIR)
@@ -79,22 +105,38 @@ if __name__ == '__main__':
 
     print(f"Loaded {len(train_dataset)} Train sequences and {len(val_dataset)} Val sequences.")
 
-    # --- 5. SETUP THE BRAIN ---
+    # --- 5. AUTOMATIC CLASS WEIGHTS (Anti-Lazy Math) ---
+    print("\nCalculating Dataset Balance...")
+    idle_count = sum(1 for _, label in train_dataset if label == 0)
+    punch_count = sum(1 for _, label in train_dataset if label == 1)
+    total_samples = idle_count + punch_count
+
+    weight_idle = total_samples / (2.0 * idle_count) if idle_count > 0 else 1.0
+    weight_punch = total_samples / (2.0 * punch_count) if punch_count > 0 else 1.0
+
+    print(f"Weights -> Idle Multiplier: {weight_idle:.2f}x | Punch Multiplier: {weight_punch:.2f}x")
+    class_weights = torch.tensor([weight_idle, weight_punch], dtype=torch.float32).to(device)
+
+    # --- 6. SETUP THE BRAIN ---
     model = PoseLSTM().to(device)
-    criterion = nn.CrossEntropyLoss()
+
+    # Loss function now uses the calculated weights!
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # The Scheduler: Halves the LR if accuracy gets stuck for 10 epochs
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10)
 
     best_val_accuracy = 0.0
 
     print("\nStarting Training...\n")
     train_time_start_on_gpu = timer()
 
-    # --- 6. THE TRAINING LOOP ---
+    # --- 7. THE TRAINING LOOP ---
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0.0
 
-        # Wrap train_loader with tqdm
         train_loop = tqdm(train_loader, desc=f"Epoch [{epoch + 1}/{EPOCHS}] Train", leave=False)
 
         for features, labels in train_loop:
@@ -108,17 +150,15 @@ if __name__ == '__main__':
             optimizer.step()
             train_loss += loss.item()
 
-            # Update the progress bar with the current loss
             train_loop.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_train_loss = train_loss / len(train_loader)
 
-        # --- 7. VALIDATION PHASE ---
+        # --- 8. VALIDATION PHASE ---
         model.eval()
         val_loss = 0.0
         correct_predictions = 0
 
-        # Wrap val_loader with tqdm
         val_loop = tqdm(val_loader, desc=f"Epoch [{epoch + 1}/{EPOCHS}] Val  ", leave=False)
 
         with torch.no_grad():
@@ -134,7 +174,10 @@ if __name__ == '__main__':
         avg_val_loss = val_loss / len(val_loader)
         val_accuracy = (correct_predictions / len(val_dataset)) * 100
 
-        # Print the final summary for the epoch so it stays on the screen
+        # Step the scheduler based on validation accuracy
+        scheduler.step(val_accuracy)
+
+        # Print the summary
         print(f"Epoch [{epoch + 1}/{EPOCHS}] -> Train Loss: {avg_train_loss:.4f} | Val Accuracy: {val_accuracy:.2f}%")
 
         if val_accuracy > best_val_accuracy:
@@ -143,9 +186,7 @@ if __name__ == '__main__':
             print(f"   [*] New best model saved! ({best_val_accuracy:.2f}%)")
 
     train_time_end_on_gpu = timer()
-    print_train_time(start=train_time_start_on_gpu,
-                     end=train_time_end_on_gpu,
-                     device=device)
+    print_train_time(start=train_time_start_on_gpu, end=train_time_end_on_gpu, device=device)
 
     print(f"\nTraining complete. Best validation accuracy: {best_val_accuracy:.2f}%")
-    print("Best weights saved to 'best_pose_model.pth'.")
+    print("Best weights safely secured in 'best_pose_model.pth'.")
