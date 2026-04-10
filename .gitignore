@@ -2,7 +2,11 @@
 .idea/
 __pycache__/
 /data
-/datasets
+/datasets/Annotation_files
+/datasets/resized
+/datasets/RGB_videos/
+/datasets/Skeleton_data
+
 /models
 yolov8n-pose.pt
 yolo26n-pose.pt
