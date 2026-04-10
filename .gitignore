@@ -1,0 +1,9 @@
+.venv
+.idea/
+__pycache__/
+/data
+/datasets
+/models
+yolov8n-pose.pt
+yolo26n-pose.pt
+yolo26x-pose.pt
