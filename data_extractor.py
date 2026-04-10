@@ -1,7 +1,6 @@
 import os
 import glob
 import re
-import shutil
 import numpy as np
 import pandas as pd
 import cv2
@@ -14,6 +13,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = BASE_DIR if "HAR" in os.path.basename(BASE_DIR) else os.path.dirname(BASE_DIR)
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "datasets")
 
+# Pointing to your pre-resized videos folder
 VIDEO_DIR = os.path.join(DATASETS_DIR, "resized")
 ANNOTATION_DIR = os.path.join(DATASETS_DIR, "Annotation_files")
 OUTPUT_DIR = os.path.join(DATASETS_DIR, "Skeleton_data")
@@ -22,7 +22,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Loading YOLO26 on {device}...")
-# Ensure you are pointing to your yolo26n-pose.pt file
 pose_model = YOLO("yolo26n-pose.pt").to(device)
 
 CLASS_MAP = {
@@ -73,6 +72,7 @@ def extract_physics_features(curr_kpts, prev_kpts):
 
 
 def get_normalized_keypoints(frame):
+    # stream=True removed to fix generator crash
     results = pose_model(frame, verbose=False)
 
     if not results or len(results[0].boxes) == 0:
@@ -129,12 +129,7 @@ def process_single_pair(video_path, excel_path, base_name):
             ret, frame = cap.read()
             if not ret: break
 
-            # HD Downscaling
-            h, w = frame.shape[:2]
-            if w > 1920 or h > 1080:
-                scale = min(1920 / w, 1080 / h)
-                frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-
+            # Removed cv2.resize block since videos are pre-resized
             curr_kpts = get_normalized_keypoints(frame)
 
             # If first frame of sequence, prev_kpts = curr_kpts (velocity is 0)
@@ -150,7 +145,7 @@ def process_single_pair(video_path, excel_path, base_name):
             prev_kpts = curr_kpts.copy()
 
         if len(sequence) < SEQ_LENGTH:
-            padding = [np.zeros(59)] * (SEQ_LENGTH - len(sequence))  # Note the 59!
+            padding = [np.zeros(59)] * (SEQ_LENGTH - len(sequence))
             sequence.extend(padding)
         else:
             sequence = sequence[:SEQ_LENGTH]
@@ -164,6 +159,18 @@ def process_single_pair(video_path, excel_path, base_name):
 
 def main():
     print("Starting Physics-Enhanced Extraction Phase...")
+
+    # AUTO-PURGE: Guarantee the old 51-D data is deleted before writing new data
+    x_save_path = os.path.join(OUTPUT_DIR, "X_data.npy")
+    y_save_path = os.path.join(OUTPUT_DIR, "y_data.npy")
+
+    if os.path.exists(x_save_path):
+        os.remove(x_save_path)
+        print("  -> Purged old X_data.npy")
+    if os.path.exists(y_save_path):
+        os.remove(y_save_path)
+        print("  -> Purged old y_data.npy")
+
     all_X, all_y = [], []
     excel_files = glob.glob(os.path.join(ANNOTATION_DIR, "*.xlsx"))
     excel_files.sort(key=natural_sort_key)
@@ -183,10 +190,8 @@ def main():
     final_X = np.array(all_X)
     final_y = np.array(all_y)
 
-    x_path = os.path.join(OUTPUT_DIR, "X_data.npy")
-    y_path = os.path.join(OUTPUT_DIR, "y_data.npy")
-    np.save(x_path, final_X)
-    np.save(y_path, final_y)
+    np.save(x_save_path, final_X)
+    np.save(y_save_path, final_y)
 
     print("\nExtraction finished.")
     print(f"Total sequences extracted: {len(final_X)}")
