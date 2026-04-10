@@ -4,7 +4,7 @@ youtube_links = [
     "https://www.youtube.com/watch?v=kbgkeTTSau8&t=779s"
 ]
 
-output_dir = "datasets/RGB_videos"
+output_dir = "../datasets/RGB_videos"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
