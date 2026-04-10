@@ -7,7 +7,6 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
-# Import the architecture from our separate model.py file
 from model import BiLSTMStrikeClassifier
 
 # --- Configuration & Paths ---
@@ -16,7 +15,6 @@ PROJECT_ROOT = BASE_DIR if "HAR" in os.path.basename(BASE_DIR) else os.path.dirn
 DATA_DIR = os.path.join(PROJECT_ROOT, "datasets", "Skeleton_data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
-# Ensure models directory exists for saving weights
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 X_PATH = os.path.join(DATA_DIR, "X_data.npy")
@@ -24,9 +22,9 @@ y_PATH = os.path.join(DATA_DIR, "y_data.npy")
 
 # --- Hyperparameters ---
 BATCH_SIZE = 64
-EPOCHS = 250
-LEARNING_RATE = 0.0005
-INPUT_DIM = 59 # 17 keypoints * 3 (x, y, conf)
+EPOCHS = 50
+LEARNING_RATE = 0.001
+INPUT_DIM = 59  # UPDATED: 51 raw coords + 8 physics features
 HIDDEN_DIM = 64
 NUM_LAYERS = 2
 NUM_CLASSES = 6
@@ -47,7 +45,7 @@ class StrikeSequenceDataset(Dataset):
 
 # --- Main Training Pipeline ---
 def main():
-    print("Initializing Ref-Brain Training Pipeline...")
+    print("Initializing Physics-Enhanced Ref-Brain Training Pipeline...")
 
     if not os.path.exists(X_PATH) or not os.path.exists(y_PATH):
         print(f"Error: Data not found at {DATA_DIR}. Run extraction first.")
@@ -56,15 +54,21 @@ def main():
     # 1. Load Data
     X = np.load(X_PATH)
     y = np.load(y_PATH)
-    print(f"Data loaded successfully. Total sequences: {len(X)}")
 
-    # 2. Train/Validation Split (80/20)
+    print(f"Data loaded successfully. Total sequences: {len(X)}")
+    print(f"Mathematical Shape of X: {X.shape}")
+
+    # 2. Hardware/Data Verification (The Clean Slate Check)
+    assert X.shape[
+               2] == INPUT_DIM, f"CRITICAL ERROR: Expected {INPUT_DIM} dimensions, got {X.shape[2]}. The old data is still loaded!"
+
+    # 3. Train/Validation Split (80/20)
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
     print(f"Training set: {len(X_train)} | Validation set: {len(X_val)}")
 
-    # 3. Compute Class Weights (Critical for Referee False-Positive Reduction)
+    # 4. Compute Class Weights
     classes = np.unique(y_train)
     weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
     class_weights = torch.tensor(weights, dtype=torch.float32)
@@ -73,17 +77,17 @@ def main():
     class_weights = class_weights.to(device)
     print(f"Hardware target: {device}")
 
-    # 4. Initialize DataLoaders
+    # 5. Initialize DataLoaders
     train_dataset = StrikeSequenceDataset(X_train, y_train)
     val_dataset = StrikeSequenceDataset(X_val, y_val)
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    # 5. Initialize Model
+    # 6. Initialize Model
+    # Note: We pass INPUT_DIM=59 here, overriding the default in model.py
     model = BiLSTMStrikeClassifier(INPUT_DIM, HIDDEN_DIM, NUM_LAYERS, NUM_CLASSES).to(device)
 
-    # Loss function with weighted penalty
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
@@ -91,7 +95,8 @@ def main():
     best_model_path = os.path.join(MODELS_DIR, "best_referee_bilstm.pth")
 
     print("\nStarting Training Phase...")
-    # 6. Execution Loop
+
+    # 7. Execution Loop
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0.0
@@ -106,10 +111,7 @@ def main():
             loss = criterion(outputs, labels)
 
             loss.backward()
-
-            # Gradient clipping to prevent exploding gradients
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
             optimizer.step()
 
             train_loss += loss.item() * sequences.size(0)
@@ -144,7 +146,6 @@ def main():
               f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%  ||  "
               f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
 
-        # Save best checkpoint
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(model.state_dict(), best_model_path)

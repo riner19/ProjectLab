@@ -3,10 +3,10 @@ import torch.nn as nn
 
 
 class BiLSTMStrikeClassifier(nn.Module):
-    def __init__(self, input_dim=59, hidden_dim=64, num_layers=2, num_classes=7):
+    def __init__(self, input_dim=59, hidden_dim=64, num_layers=2, num_classes=6):
         """
-        Skeletal Action Recognition (SAR) Model for Combat Sports.
-        Processes sequential (x, y, conf) normalized keypoints.
+        Physics-Enhanced Skeletal Action Recognition (SAR) Model.
+        Processes sequential 59-D vectors: 51 raw coords + 8 physics features.
         """
         super(BiLSTMStrikeClassifier, self).__init__()
 
@@ -49,10 +49,14 @@ class BiLSTMStrikeClassifier(nn.Module):
 
 if __name__ == "__main__":
     # Diagnostic block: Run this file directly to verify tensor shapes
-    print("Testing BiLSTM Architecture...")
-    dummy_input = torch.randn(32, 30, 51)  # Batch Size 32, 30 Frames, 51 Keypoint values
+    print("Testing Physics-Enhanced BiLSTM Architecture...")
+
+    # Simulating: Batch Size 32, 30 Frames, 59 Features (51 coords + 8 physics)
+    dummy_input = torch.randn(32, 30, 59)
+
     model = BiLSTMStrikeClassifier()
     output = model(dummy_input)
+
     print(f"Input shape: {dummy_input.shape}")
-    print(f"Output shape: {output.shape} (Expected: 32, 7)")
+    print(f"Output shape: {output.shape} (Expected: 32, 6)")
     print("Architecture verified.")
