@@ -50,12 +50,7 @@ def calculate_angle(a, b, c):
 
 
 def extract_physics_features(curr_kpts, prev_kpts):
-    """
-    Computes biomechanical features: Joint Angles, Velocities, and Hip Distances.
-    YOLO Pose Indices:
-    L_Shoulder=5, R_Shoulder=6 | L_Elbow=7, R_Elbow=8
-    L_Wrist=9, R_Wrist=10 | L_Hip=11, R_Hip=12
-    """
+
     # 1. Elbow Angles (Shoulder -> Elbow -> Wrist)
     l_angle = calculate_angle(curr_kpts[5][:2], curr_kpts[7][:2], curr_kpts[9][:2])
     r_angle = calculate_angle(curr_kpts[6][:2], curr_kpts[8][:2], curr_kpts[10][:2])
@@ -70,16 +65,37 @@ def extract_physics_features(curr_kpts, prev_kpts):
 
     return np.array([l_angle, r_angle, l_vel[0], l_vel[1], r_vel[0], r_vel[1], l_dist, r_dist])
 
+TARGET_TRACK_ID = None
+
 
 def get_normalized_keypoints(frame):
-    # stream=True removed to fix generator crash
-    results = pose_model(frame, verbose=False)
+    global TARGET_TRACK_ID
 
-    if not results or len(results[0].boxes) == 0:
+    # Use .track() instead of direct inference to assign persistent IDs
+    results = pose_model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
+
+    if not results or len(results[0].boxes) == 0 or results[0].boxes.id is None:
         return np.zeros((17, 3))
 
-    box = results[0].boxes.xyxy[0].cpu().numpy()
-    keypoints = results[0].keypoints.data[0].cpu().numpy()
+    boxes = results[0].boxes.xyxy.cpu().numpy()
+    track_ids = results[0].boxes.id.int().cpu().tolist()
+    keypoints_batch = results[0].keypoints.data.cpu().numpy()
+
+    target_idx = -1
+
+    # Lock onto the first detected ID and stick with it for the whole video
+    if TARGET_TRACK_ID is None and len(track_ids) > 0:
+        TARGET_TRACK_ID = track_ids[0]
+
+    # Find our target fighter in the current frame
+    if TARGET_TRACK_ID in track_ids:
+        target_idx = track_ids.index(TARGET_TRACK_ID)
+    else:
+        # If the target is temporarily lost, fallback to the most confident detection
+        target_idx = 0
+
+    box = boxes[target_idx]
+    keypoints = keypoints_batch[target_idx]
 
     x_min, y_min, x_max, y_max = box
     width = x_max - x_min
@@ -90,6 +106,7 @@ def get_normalized_keypoints(frame):
 
     normalized_kpts = np.zeros((17, 3))
     for i, (x, y, conf) in enumerate(keypoints):
+        # Keep your 0.3 confidence threshold to drop blurry limbs
         if conf > 0.3:
             normalized_kpts[i] = [
                 (x - x_min) / width,
@@ -112,46 +129,72 @@ def process_single_pair(video_path, excel_path, base_name):
         return [], []
 
     cap = cv2.VideoCapture(video_path)
+    total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     X_local, y_local = [], []
 
-    for index, row in tqdm(df.iterrows(), total=len(df), desc=f"  Extracting {base_name}", leave=False):
-        start_frame = int(row['Start_Frame'])
-        end_frame = int(row['Ending_Frame'])
+    # 1. Map out all annotated intervals to find the "gaps"
+    annotated_intervals = []
+    for index, row in df.iterrows():
         label = CLASS_MAP.get(row['Class'], -1)
+        if label != -1:
+            annotated_intervals.append((int(row['Start_Frame']), int(row['Ending_Frame']), label))
 
-        if label == -1: continue
+    # Sort by start frame to process sequentially
+    annotated_intervals.sort(key=lambda x: x[0])
 
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    # 2. Helper function to extract a specific frame range
+    def extract_sequence(start_f, end_f, label_idx):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
         sequence = []
         prev_kpts = np.zeros((17, 3))
 
-        for frame_idx in range(start_frame, end_frame + 1):
+        for frame_idx in range(start_f, end_f + 1):
             ret, frame = cap.read()
             if not ret: break
 
-            # Removed cv2.resize block since videos are pre-resized
             curr_kpts = get_normalized_keypoints(frame)
-
-            # If first frame of sequence, prev_kpts = curr_kpts (velocity is 0)
-            if frame_idx == start_frame:
+            if frame_idx == start_f:
                 prev_kpts = curr_kpts.copy()
 
             physics_features = extract_physics_features(curr_kpts, prev_kpts)
-
-            # Concatenate the 51 raw coordinates with the 8 physics features
             full_frame_vector = np.concatenate((curr_kpts.flatten(), physics_features))
             sequence.append(full_frame_vector)
-
             prev_kpts = curr_kpts.copy()
 
+        # FIXED PADDING: Repeat the last known frame state instead of zeroing out
         if len(sequence) < SEQ_LENGTH:
-            padding = [np.zeros(59)] * (SEQ_LENGTH - len(sequence))
+            last_frame_state = sequence[-1] if len(sequence) > 0 else np.zeros(59)
+            padding = [last_frame_state] * (SEQ_LENGTH - len(sequence))
             sequence.extend(padding)
         else:
             sequence = sequence[:SEQ_LENGTH]
 
-        X_local.append(sequence)
-        y_local.append(label)
+        return sequence
+
+    # 3. Extract logic: Mine both Strikes and Idle Gaps
+    current_frame = 0
+    for start_f, end_f, label in tqdm(annotated_intervals, desc=f"  Extracting {base_name}", leave=False):
+
+        # --- IDLE MINING (Class 6) ---
+        # If there is a gap of at least SEQ_LENGTH (30 frames) before the next strike,
+        # extract chunks of it as "Idle" data.
+        gap_size = start_f - current_frame
+        if gap_size >= SEQ_LENGTH:
+            # Step by SEQ_LENGTH to avoid overlapping idle frames
+            for idle_start in range(current_frame, start_f - SEQ_LENGTH + 1, SEQ_LENGTH):
+                idle_seq = extract_sequence(idle_start, idle_start + SEQ_LENGTH - 1, 6)
+                if len(idle_seq) == SEQ_LENGTH:
+                    X_local.append(idle_seq)
+                    y_local.append(6)  # 6 is "Idle"
+
+        # --- STRIKE EXTRACTION ---
+        strike_seq = extract_sequence(start_f, end_f, label)
+        if len(strike_seq) == SEQ_LENGTH:
+            X_local.append(strike_seq)
+            y_local.append(label)
+
+        # Move the cursor past this strike
+        current_frame = end_f + 1
 
     cap.release()
     return X_local, y_local
