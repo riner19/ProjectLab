@@ -20,4 +20,4 @@ for i, link in enumerate(youtube_links):
 
     os.system(download_cmd)
 
-print("\nDone! All videos have been downloaded at their maximum available resolution and native frame rate.")
+print("\nAll videos have been downloaded at their maximum available resolution and native frame rate.")

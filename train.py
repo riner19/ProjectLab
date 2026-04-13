@@ -28,7 +28,7 @@ INPUT_DIM = 62  # 51 raw coords + 11 physics features
 HIDDEN_DIM = 64
 NUM_LAYERS = 2
 NUM_CLASSES = 8  # Classes 0-5 (Strikes), 6 (Guard), 7 (Idle)
-PATIENCE = 100  # Early stopping trigger
+PATIENCE = 100
 
 
 class StrikeSequenceDataset(Dataset):

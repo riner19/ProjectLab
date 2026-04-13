@@ -24,11 +24,7 @@ CLASS_MAP = {
 def normalize_sequence(punch_clip):
     """
     Normalizes a single pre-cut clip:
-    - Centers on Mid-Hip
-    - Scales by Torso Length
-    - Edge-Pads to exactly 25 frames
-    - Calculates Explicit Velocity (P_t - P_{t-1})
-    - Returns shape (25, 102)
+
     """
     normalized_punch = []
 
@@ -71,7 +67,7 @@ def normalize_sequence(punch_clip):
         while len(normalized_punch) < 25:
             normalized_punch.append(last_valid)
 
-    # --- EXPLICIT KINEMATICS (VELOCITY) ---
+    # velocity
     enhanced_punch = []
     for i in range(25):
         current_pos = normalized_punch[i]
@@ -90,7 +86,7 @@ def process_boxing_vi():
     all_sequences, all_labels = [], []
 
     if not os.path.exists(SKELETON_DIR):
-        print(f"❌ Error: {SKELETON_DIR} not found.")
+        print(f"Error: {SKELETON_DIR} not found.")
         return
 
     video_files = [f for f in os.listdir(SKELETON_DIR) if f.endswith('.npy')]
@@ -111,11 +107,9 @@ def process_boxing_vi():
         raw_data = np.load(npy_path, allow_pickle=True)
         raw_data = np.squeeze(raw_data)
 
-        # Identify the Class column index (Fallback if named strangely)
-        # Assuming format: Start_Frame, End_Frame, Class
         class_col_idx = 2 if len(df.columns) > 2 else -1
 
-        print(f"📦 Processing: {v_id} | .npy clips: {len(raw_data)} | Excel rows: {len(df)}")
+        print(f"Processing: {v_id} | .npy clips: {len(raw_data)} | Excel rows: {len(df)}")
 
         video_count = 0
         dropped_shape = 0
@@ -156,7 +150,7 @@ def process_boxing_vi():
                 continue
 
         print(
-            f"   ✅ Integrated: {video_count} | ❌ Dropped (Shape): {dropped_shape} | ❌ Dropped (Label): {dropped_label}")
+            f"Integrated: {video_count} | Dropped (Shape): {dropped_shape} | Dropped (Label): {dropped_label}")
 
     # Save to Disk
     if all_sequences:
@@ -165,10 +159,10 @@ def process_boxing_vi():
         y_final = np.array(all_labels, dtype=np.int64)
         np.save(OUTPUT_X, X_final)
         np.save(OUTPUT_Y, y_final)
-        print(f"\n🏆 SUCCESS: Saved {len(X_final)} true clips to {OUTPUT_X}")
-        print(f"📊 Final Tensor Shape: X = {X_final.shape}, y = {y_final.shape}")
+        print(f"\nSUCCESS: Saved {len(X_final)} true clips to {OUTPUT_X}")
+        print(f"Final Tensor Shape: X = {X_final.shape}, y = {y_final.shape}")
     else:
-        print("\n⚠️ No valid sequences found. Check your folder paths and Excel format.")
+        print("\nNo valid sequences found. Check your folder paths and Excel format.")
 
 
 if __name__ == "__main__":

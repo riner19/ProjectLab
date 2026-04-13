@@ -8,7 +8,6 @@ class BiLSTMStrikeClassifier(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
-        # --- NEW FIX: Normalize the 62-D vector before it hits the memory cells ---
         self.layer_norm = nn.LayerNorm(input_dim)
 
         self.lstm = nn.LSTM(
@@ -30,11 +29,10 @@ class BiLSTMStrikeClassifier(nn.Module):
         h0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_dim, device=x.device)
         c0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_dim, device=x.device)
 
-        # --- NEW FIX: Apply normalization ---
         x = self.layer_norm(x)
 
         out, _ = self.lstm(x, (h0, c0))
-        out = out[:, -1, :] # Decode final step
+        out = out[:, -1, :]
         out = self.fc1(out)
         out = self.relu(out)
         out = self.dropout(out)

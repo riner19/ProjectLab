@@ -161,7 +161,7 @@ def process_single_pair(video_path, excel_path, base_name):
             sequence.append(full_frame_vector)
             prev_kpts = curr_kpts.copy()
 
-        # FIXED PADDING: Repeat the last known frame state instead of zeroing out
+
         if len(sequence) < SEQ_LENGTH:
             last_frame_state = sequence[-1] if len(sequence) > 0 else np.zeros(59)
             padding = [last_frame_state] * (SEQ_LENGTH - len(sequence))
@@ -175,9 +175,6 @@ def process_single_pair(video_path, excel_path, base_name):
     current_frame = 0
     for start_f, end_f, label in tqdm(annotated_intervals, desc=f"  Extracting {base_name}", leave=False):
 
-        # --- IDLE MINING (Class 6) ---
-        # If there is a gap of at least SEQ_LENGTH (30 frames) before the next strike,
-        # extract chunks of it as "Idle" data.
         gap_size = start_f - current_frame
         if gap_size >= SEQ_LENGTH:
             # Step by SEQ_LENGTH to avoid overlapping idle frames
