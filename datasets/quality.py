@@ -4,8 +4,8 @@ import shutil
 import subprocess
 from fractions import Fraction
 
-VIDEO_DIR = r"RGB_videos"
-OUTPUT_DIR = os.path.join(VIDEO_DIR, "resized")
+VIDEO_DIR = r"RGB_videos_high_quality"
+OUTPUT_DIR = os.path.join(VIDEO_DIR, "RGB_videos")
 TARGET_SIZE = "1920:1080"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
