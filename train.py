@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
-from sklearn.model_selection import GroupShuffleSplit
 from model import BoxingLSTM
 from sklearn.utils.class_weight import compute_class_weight
 
@@ -14,6 +13,26 @@ BATCH_SIZE = 64
 EPOCHS = 100
 LEARNING_RATE = 0.0005
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+# --- Custom Focal Loss Implementation ---
+class FocalLoss(nn.Module):
+    def __init__(self, weight=None, gamma=2.0):
+        super(FocalLoss, self).__init__()
+        self.weight = weight
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        # Calculate standard cross entropy (unreduced)
+        ce_loss = nn.functional.cross_entropy(inputs, targets, weight=self.weight, reduction='none')
+
+        # pt is the probability of the true class
+        pt = torch.exp(-ce_loss)
+
+        # Apply the focal modulating factor: (1 - pt)^gamma
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+
+        return focal_loss.mean()
 
 
 def load_data():
@@ -30,24 +49,19 @@ def main():
     X, y, groups = load_data()
     print(f"Loaded Dataset Shape -> X: {X.shape}, y: {y.shape}")
 
-
     # 2. Manual Group Split (Testing on different camera angles)
-    # V1, V4, V6 bring the rare punches. V9, V10 teach it the front-facing angle.
     train_video_names = ['V1', 'V2', 'V5', 'V4', 'V9', 'V6', 'V7', 'V8']
-
-    # V9 and V10 contain a balanced mix of every punch to act as the perfect test
     val_video_names = ['V3', 'V10']
 
     # Create boolean masks
     train_mask = np.isin(groups, train_video_names)
     val_mask = np.isin(groups, val_video_names)
 
-    # Apply the masks to X and y
+    # Apply the masks
     X_train, X_val = X[train_mask], X[val_mask]
     y_train, y_val = y[train_mask], y[val_mask]
 
     print(f"Training sequences: {len(X_train)} | Validation sequences: {len(X_val)}")
-
 
     # 3. Convert to PyTorch Tensors
     X_train_t = torch.tensor(X_train, dtype=torch.float32)
@@ -62,22 +76,23 @@ def main():
     train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=False)
 
-    # 5. Initialize Model, Loss, and Optimizer
-    model = BoxingLSTM(input_size=62, num_classes=8).to(DEVICE)
+    # 5. Initialize Model (UPDATED FOR 64-D and 6 CLASSES)
+    model = BoxingLSTM(input_size=64, num_classes=6).to(DEVICE)
 
-
-
-    class_weights = compute_class_weight(
+    # Compute balanced class weights
+    raw_class_weights = compute_class_weight(
         class_weight='balanced',
         classes=np.unique(y_train),
         y=y_train
     )
-    weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(DEVICE)
 
-    criterion = nn.CrossEntropyLoss(weight=weights_tensor)
+    smoothed_weights = np.sqrt(raw_class_weights)
+    weights_tensor = torch.tensor(smoothed_weights, dtype=torch.float32).to(DEVICE)
 
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+    # Initialize Focal Loss instead of standard CrossEntropy
+    criterion = FocalLoss(weight=weights_tensor, gamma=1.5)
 
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-2)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     # 6. Training Loop
