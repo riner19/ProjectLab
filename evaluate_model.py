@@ -77,9 +77,9 @@ def generate_confusion_matrix():
 
     print(f"[*] Isolated Pure Validation Set: {len(val_dataset)} sequences.")
 
-    # CRITICAL CHANGE: We only pass `val_dataset` to the dataloader now!
+
     dataloader = DataLoader(val_dataset, batch_size=128, shuffle=False)
-    # ==========================================
+
 
     all_preds = []
     all_targets = []
@@ -90,26 +90,24 @@ def generate_confusion_matrix():
             batch_X = batch_X.to(device)
             outputs = model(batch_X)
 
-            # Extract the class with the highest probability
+
             _, predicted = outputs.max(dim=1)
 
             all_preds.extend(predicted.cpu().numpy())
             all_targets.extend(batch_y.numpy())
 
-    # --- Generate Metrics & Plot ---
+
     print("[*] Generating Confusion Matrix...")
-    # Explicitly pass the labels [0, 1, 2, 3, 4, 5, 6] so it knows about all 7 classes
+
     labels_list = list(range(len(CLASSES)))
 
     cm = confusion_matrix(all_targets, all_preds, labels=labels_list)
 
-    # Print text-based classification report to the console
     print("\n" + "=" * 50)
     print(" DETAILED CLASSIFICATION REPORT")
     print("=" * 50)
     print(classification_report(all_targets, all_preds, labels=labels_list, target_names=CLASSES, zero_division=0))
 
-    # Plot visual heatmap
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=CLASSES, yticklabels=CLASSES,
@@ -119,15 +117,13 @@ def generate_confusion_matrix():
     plt.ylabel('True / Ground Truth Action', fontsize=12)
     plt.xlabel('Predicted Action', fontsize=12)
 
-    # Rotate x-axis labels so they don't overlap
+
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
 
-    # Save a high-res PNG to your folder
     plt.savefig('confusion_matrix_results.png', dpi=300)
     print("[*] Heatmap saved as 'confusion_matrix_results.png'.")
 
-    # Display the plot window
     plt.show()
 
 
