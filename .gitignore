@@ -1,0 +1,6 @@
+datasets
+.venv
+guard
+edge_boxing_tcn.pth
+yolo26n-pose.pt
+.idea
